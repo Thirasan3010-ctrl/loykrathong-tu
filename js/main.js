@@ -311,7 +311,23 @@ function hangWish() {
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 let downAt = null;
-canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+// ----- ลากหน้าจอเพื่อหมุนกล้องรอบตัวละคร (ใช้ได้ทั้งนิ้วและเมาส์ ใช้พร้อมจอยได้) -----
+let camYaw = 0, camYawTarget = 0;
+const drag = { id: null, x: 0 };
+canvas.addEventListener('pointerdown', (e) => {
+  downAt = [e.clientX, e.clientY];
+  if (state === 'world' && !minigame && !anyOverlay() && drag.id === null) {
+    drag.id = e.pointerId; drag.x = e.clientX;
+  }
+});
+window.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== drag.id) return;
+  const dx = e.clientX - drag.x; drag.x = e.clientX;
+  camYawTarget -= dx * (isTouch() ? 0.009 : 0.006);
+});
+const endDrag = (e) => { if (e.pointerId === drag.id) drag.id = null; };
+window.addEventListener('pointerup', endDrag);
+window.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('pointerup', (e) => {
   if (minigame && downAt && state === 'world' && !anyOverlay()) { tossTap(); return; }
   if (!downAt || state !== 'world' || anyOverlay() || !wishTree) return;
@@ -582,10 +598,10 @@ function enterWorld() {
   }
   showScreen('world');
   const how = input.usingGamepad
-    ? 'โยกสติ๊กซ้ายเพื่อเดิน • แวะร้านอาหาร ต้นไม้ขอพร เกมโยนห่วง ปาลูกโป่ง • ไปที่วงแสงบนสะพาน แล้วกด A เพื่อลอยกระทง'
+    ? 'โยกสติ๊กซ้ายเพื่อเดิน • สติ๊กขวาหมุนกล้อง • แวะร้านอาหาร ต้นไม้ขอพร เกมโยนห่วง ปาลูกโป่ง • ไปที่วงแสงบนสะพาน แล้วกด A เพื่อลอยกระทง'
     : isTouch()
-      ? 'ใช้จอยซ้ายล่างเดิน • แวะร้านอาหาร ต้นไม้ขอพร เกมโยนห่วง ปาลูกโป่ง • ไปที่วงแสงบนสะพาน แล้วแตะปุ่มลอยกระทง'
-      : 'WASD / ลูกศร เพื่อเดิน • แวะร้านอาหาร ต้นไม้ขอพร เกมโยนห่วง ปาลูกโป่ง (E) • ไปที่วงแสงบนสะพาน แล้วกด E หรือ Space';
+      ? 'ใช้จอยซ้ายล่างเดิน • ลากจอเพื่อหมุนกล้อง • แวะร้านอาหาร ต้นไม้ขอพร เกมโยนห่วง ปาลูกโป่ง • ไปที่วงแสงบนสะพาน แล้วแตะปุ่มลอยกระทง'
+      : 'WASD / ลูกศร เพื่อเดิน • คลิกค้างลากเพื่อหมุนกล้อง • แวะร้านอาหาร ต้นไม้ขอพร เกมโยนห่วง ปาลูกโป่ง (E) • ไปที่วงแสงบนสะพาน แล้วกด E หรือ Space';
   $('#hud-hint').textContent = how;
   $('#joystick').classList.toggle('hidden', !isTouch());
   persist();
@@ -719,13 +735,16 @@ function updateWorld(dt, t) {
     const amt = Math.hypot(mv.x, mv.y);
     if (amt > 0.05) {
       const speed = 4.2 * amt;
-      const nx = playerPos.x + mv.x * speed * dt, nz = playerPos.z + mv.y * speed * dt;
+      // ทิศเดินอิงมุมกล้อง: ดันจอยขึ้น = เดินไปข้างหน้าตามที่กล้องมอง
+      const cs = Math.cos(camYaw), sn = Math.sin(camYaw);
+      const wx = mv.x * cs + mv.y * sn, wz = -mv.x * sn + mv.y * cs;
+      const nx = playerPos.x + wx * speed * dt, nz = playerPos.z + wz * speed * dt;
       // เดินชิดขอบได้แบบไถล (ลองทีละแกน)
       if (world.canWalk(nx, nz)) { playerPos.x = nx; playerPos.z = nz; }
       else if (world.canWalk(nx, playerPos.z)) playerPos.x = nx;
       else if (world.canWalk(playerPos.x, nz)) playerPos.z = nz;
       world.resolveColliders(playerPos);
-      const target = Math.atan2(mv.x, mv.y);
+      const target = Math.atan2(wx, wz);
       let diff = target - playerYaw;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       playerYaw += diff * Math.min(1, dt * 12);
@@ -844,17 +863,26 @@ function updateCamera(dt, t) {
     camPos.lerp(tmpA, 1 - Math.exp(-dt * 6));
     lookAt.lerp(tmpB, 1 - Math.exp(-dt * 6));
   } else if (state === 'world') {
+    // สติ๊กขวาของจอยเกมก็หมุนกล้องได้
+    const rx = input.pad?.axes[2] || 0;
+    if (Math.abs(rx) > 0.25 && !anyOverlay()) camYawTarget -= rx * dt * 2.4;
+    camYaw += (camYawTarget - camYaw) * Math.min(1, dt * 10);
     const portrait = camera.aspect < 1;
-    const off = portrait ? new THREE.Vector3(0, 8, 11.5) : new THREE.Vector3(0, 5.5, 8.5);
-    const want = playerPos.clone().add(off);
-    camPos.lerp(want, 1 - Math.exp(-dt * 5));
-    lookAt.lerp(tmp.copy(playerPos).add(new THREE.Vector3(0, 0.8, -1.5)), 1 - Math.exp(-dt * 6));
+    const dist = portrait ? 11.5 : 8.5, h = portrait ? 8 : 5.5;
+    const cs = Math.cos(camYaw), sn = Math.sin(camYaw);
+    const want = tmpA.set(playerPos.x + sn * dist, h, playerPos.z + cs * dist);
+    // ตอนหมุนให้กล้องตามทันที (ไม่หน่วงจนเหวี่ยงตัด)
+    camPos.lerp(want, 1 - Math.exp(-dt * (drag.id !== null ? 14 : 5)));
+    lookAt.lerp(tmpB.set(playerPos.x - sn * 1.5, 0.8, playerPos.z - cs * 1.5), 1 - Math.exp(-dt * 6));
   } else {
     // หน้าเมนู: กล้องหมุนช้าๆ รอบสระ
     const a = t * 0.06;
     camPos.set(Math.sin(a) * 30, 11, Math.cos(a) * 30 + 4);
     lookAt.set(0, 0, -6);
   }
+  // มุมกล้องพิเศษ (ใช้ถ่ายภาพโปรโมต ผ่าน window.__game.camOverride)
+  const ov = window.__game?.camOverride;
+  if (ov) { camPos.set(...ov.pos); lookAt.set(...ov.look); }
   camera.position.copy(camPos);
   camera.lookAt(lookAt);
 }
@@ -933,4 +961,4 @@ loop();
 $('#loading').classList.add('hidden');
 
 // เปิดให้ทดสอบผ่าน console ได้
-window.__game = { save, get state() { return state; }, playerPos, floaters, renderer, worldScene };
+window.__game = { save, get state() { return state; }, playerPos, floaters, renderer, worldScene, quality, GAMES };
