@@ -171,7 +171,9 @@ export function bakeSprites(root, camera) {
   const visit = (node) => {
     for (const c of node.children) {
       if (c.userData.dynamic) continue;
-      if (c.isSprite && c.material.map && c.visible) victims.push(c);
+      // เฉพาะแสงฟุ้งทรงกลม (สเกลกว้าง=สูง และแบบเรืองแสง) ป้ายข้อความต้องคงเป็น Sprite ไม่งั้นจะถูกบีบเป็นสี่เหลี่ยมจัตุรัส
+      if (c.isSprite && c.material.map && c.visible && c.material.blending === THREE.AdditiveBlending &&
+          Math.abs(c.scale.x - c.scale.y) < 1e-3) victims.push(c);
       visit(c);
     }
   };
